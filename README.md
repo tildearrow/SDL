@@ -1,5 +1,10 @@
+# MODIFIED!!!
 
-# Simple DirectMedia Layer (SDL) Version 2.0
+this is a **MODIFIED** version of SDL which adds some Windows 2000 support.
+
+this version is specifically tailored for Furnace and may not work properly when built as a dynamic/shared library.
+
+# Modified Simple DirectMedia Layer (SDL) Version 2.0
 
 https://www.libsdl.org/
 

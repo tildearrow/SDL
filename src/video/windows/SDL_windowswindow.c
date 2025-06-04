@@ -1086,6 +1086,29 @@ int WIN_GetWindowGammaRamp(_THIS, SDL_Window * window, Uint16 * ramp)
     return succeeded ? 0 : -1;
 }
 
+typedef BOOL(WINAPI *pfnGetModuleHandleExW)(DWORD, LPCWSTR, HMODULE*);
+static pfnGetModuleHandleExW pGetModuleHandleExW = NULL;
+static SDL_bool pGetModuleHandleExInit=SDL_FALSE;
+
+static SDL_bool WIN_GetModuleHandleEx(DWORD dwFlags, LPCWSTR lpModuleName, HMODULE *phModule) {
+  if (!pGetModuleHandleExInit) {
+    HMODULE kernel32 = GetModuleHandle(TEXT("kernel32.dll"));
+    if (kernel32) {
+      pGetModuleHandleExW = (pfnGetModuleHandleExW)GetProcAddress(kernel32, "GetModuleHandleExW");
+    }
+    pGetModuleHandleExInit=SDL_TRUE;
+  }
+
+  if (pGetModuleHandleExW) {
+    return pGetModuleHandleExW(dwFlags,lpModuleName,phModule);
+  }
+
+  /* dummy implementation for Windows 2000 and earlier */
+  *phModule = NULL;
+
+  return SDL_TRUE;
+}
+
 static void WIN_GrabKeyboard(SDL_Window *window)
 {
     SDL_WindowData *data = (SDL_WindowData *)window->driverdata;
@@ -1101,7 +1124,7 @@ static void WIN_GrabKeyboard(SDL_Window *window)
        this nice API that will go through the loaded modules and find the
        one containing our code.
     */
-    if (!GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+    if (!WIN_GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
                            (LPTSTR)WIN_KeyboardHookProc,
                            &module)) {
         return;

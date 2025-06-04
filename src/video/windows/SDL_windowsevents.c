@@ -117,6 +117,11 @@
 #define USER_TIMER_MINIMUM 0x0000000A
 #endif
 
+/* GetRawInputData, not available in Windows 2000 */
+typedef UINT(WINAPI *pfnGetRawInputData)(HRAWINPUT, UINT, LPVOID, PUINT, UINT);
+static pfnGetRawInputData pGetRawInputData = NULL;
+static SDL_bool pGetRawInputDataInit = SDL_FALSE;
+
 static SDL_Scancode VKeytoScancodeFallback(WPARAM vkey)
 {
     switch (vkey) {
@@ -901,7 +906,19 @@ WIN_WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             break;
         }
 
-        GetRawInputData(hRawInput, RID_INPUT, &inp, &size, sizeof(RAWINPUTHEADER));
+        if (!pGetRawInputDataInit) {
+            HMODULE user32 = GetModuleHandle(TEXT("user32.dll"));
+            if (user32) {
+                pGetRawInputData = (pfnGetRawInputData)GetProcAddress(user32, "GetRawInputData");
+            }
+            pGetRawInputDataInit = SDL_TRUE;
+        }
+
+        if (!pGetRawInputData) {
+            break;
+        }
+
+        pGetRawInputData(hRawInput, RID_INPUT, &inp, &size, sizeof(RAWINPUTHEADER));
 
         /* Mouse data (ignoring synthetic mouse events generated for touchscreens) */
         if (inp.header.dwType == RIM_TYPEMOUSE) {

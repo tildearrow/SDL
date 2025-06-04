@@ -32,6 +32,11 @@ static SDL_Cursor *SDL_blank_cursor = NULL;
 
 static int rawInputEnableCount = 0;
 
+/* RegisterRawInputDevices, not available in Windows 2000 */
+typedef BOOL(WINAPI *pfnRegisterRawInputDevices)(PCRAWINPUTDEVICE, UINT, UINT);
+static pfnRegisterRawInputDevices pRegisterRawInputDevices = NULL;
+static SDL_bool pRegisterRawInputDevicesInit = SDL_FALSE;
+
 static int ToggleRawInput(SDL_bool enabled)
 {
     RAWINPUTDEVICE rawMouse = { 0x01, 0x02, 0, NULL }; /* Mouse: UsagePage = 1, Usage = 2 */
@@ -55,8 +60,26 @@ static int ToggleRawInput(SDL_bool enabled)
         rawMouse.dwFlags |= RIDEV_REMOVE;
     }
 
+    if (!pRegisterRawInputDevicesInit) {
+        HMODULE user32 = GetModuleHandle(TEXT("user32.dll"));
+        if (user32) {
+            pRegisterRawInputDevices = (pfnRegisterRawInputDevices)GetProcAddress(user32, "RegisterRawInputDevices");
+        }
+        pRegisterRawInputDevicesInit = SDL_TRUE;
+    }
+
+    /* Check whether we don't have the function */
+    if (!pRegisterRawInputDevices) {
+        /* Only return an error when registering. If we unregister and fail,
+           then it's probably that we unregistered twice. That's OK. */
+        if (enabled) {
+            return SDL_Unsupported();
+        }
+        return 0;
+    }
+
     /* (Un)register raw input for mice */
-    if (RegisterRawInputDevices(&rawMouse, 1, sizeof(RAWINPUTDEVICE)) == FALSE) {
+    if (pRegisterRawInputDevices(&rawMouse, 1, sizeof(RAWINPUTDEVICE)) == FALSE) {
         /* Reset the enable count, otherwise subsequent enable calls will
            believe raw input is enabled */
         rawInputEnableCount = 0;

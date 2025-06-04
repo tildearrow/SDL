@@ -1,6 +1,9 @@
 
 Please distribute this file with the SDL runtime environment:
 
+this is a **MODIFIED** version of SDL which adds some Windows 2000 support.
+this version is specifically tailored for Furnace and may not work properly when built as a dynamic/shared library.
+
 The Simple DirectMedia Layer (SDL for short) is a cross-platform library
 designed to make it easy to write multi-media software, such as games
 and emulators.
