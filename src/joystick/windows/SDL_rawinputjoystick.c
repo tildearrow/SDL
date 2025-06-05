@@ -108,6 +108,20 @@ static int SDL_RAWINPUT_numjoysticks = 0;
 
 static void RAWINPUT_JoystickClose(SDL_Joystick *joystick);
 
+/* functions not available in Windows 2000 */
+typedef BOOL(WINAPI *pfnRegisterRawInputDevices)(PCRAWINPUTDEVICE, UINT, UINT);
+typedef UINT(WINAPI *pfnGetRawInputData)(HRAWINPUT, UINT, LPVOID, PUINT, UINT);
+typedef UINT(WINAPI *pfnGetRawInputDeviceInfoA)(HANDLE, UINT, LPVOID, PUINT);
+typedef UINT(WINAPI *pfnGetRawInputDeviceList)(PRAWINPUTDEVICELIST, PUINT, UINT);
+static pfnRegisterRawInputDevices pRegisterRawInputDevices = NULL;
+static pfnGetRawInputData pGetRawInputData = NULL;
+static pfnGetRawInputDeviceInfoA pGetRawInputDeviceInfoA = NULL;
+static pfnGetRawInputDeviceList pGetRawInputDeviceList = NULL;
+static SDL_bool pRegisterRawInputDevicesInit = SDL_FALSE;
+static SDL_bool pGetRawInputDataInit = SDL_FALSE;
+static SDL_bool pGetRawInputDeviceInfoAInit = SDL_FALSE;
+static SDL_bool pGetRawInputDeviceListInit = SDL_FALSE;
+
 typedef struct _SDL_RAWINPUT_Device
 {
     SDL_atomic_t refcount;
@@ -869,14 +883,24 @@ static void RAWINPUT_AddDevice(HANDLE hDevice)
         return;
     }
 
+    if (!pGetRawInputDeviceInfoAInit) {
+        HMODULE user32 = GetModuleHandle(TEXT("user32.dll"));
+        if (user32) {
+            pGetRawInputDeviceInfoA = (pfnGetRawInputDeviceInfoA)GetProcAddress(user32, "GetRawInputDeviceInfoA");
+        }
+        pGetRawInputDeviceInfoAInit = SDL_TRUE;
+    }
+
+    CHECK(pGetRawInputDeviceInfoA);
+
     /* Figure out what kind of device it is */
     size = sizeof(rdi);
-    CHECK(GetRawInputDeviceInfoA(hDevice, RIDI_DEVICEINFO, &rdi, &size) != (UINT)-1);
+    CHECK(pGetRawInputDeviceInfoA(hDevice, RIDI_DEVICEINFO, &rdi, &size) != (UINT)-1);
     CHECK(rdi.dwType == RIM_TYPEHID);
 
     /* Get the device "name" (HID Path) */
     size = SDL_arraysize(dev_name);
-    CHECK(GetRawInputDeviceInfoA(hDevice, RIDI_DEVICENAME, dev_name, &size) != (UINT)-1);
+    CHECK(pGetRawInputDeviceInfoA(hDevice, RIDI_DEVICENAME, dev_name, &size) != (UINT)-1);
     /* Only take XInput-capable devices */
     CHECK(SDL_strstr(dev_name, "IG_") != NULL);
 #ifdef SDL_JOYSTICK_HIDAPI
@@ -895,10 +919,10 @@ static void RAWINPUT_AddDevice(HANDLE hDevice)
 
     /* Get HID Top-Level Collection Preparsed Data */
     size = 0;
-    CHECK(GetRawInputDeviceInfoA(hDevice, RIDI_PREPARSEDDATA, NULL, &size) != (UINT)-1);
+    CHECK(pGetRawInputDeviceInfoA(hDevice, RIDI_PREPARSEDDATA, NULL, &size) != (UINT)-1);
     device->preparsed_data = (PHIDP_PREPARSED_DATA)SDL_calloc(size, sizeof(BYTE));
     CHECK(device->preparsed_data);
-    CHECK(GetRawInputDeviceInfoA(hDevice, RIDI_PREPARSEDDATA, device->preparsed_data, &size) != (UINT)-1);
+    CHECK(pGetRawInputDeviceInfoA(hDevice, RIDI_PREPARSEDDATA, device->preparsed_data, &size) != (UINT)-1);
 
     hFile = CreateFileA(dev_name, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
     CHECK(hFile != INVALID_HANDLE_VALUE);
@@ -998,13 +1022,25 @@ static void RAWINPUT_DetectDevices(void)
 {
     UINT device_count = 0;
 
-    if ((GetRawInputDeviceList(NULL, &device_count, sizeof(RAWINPUTDEVICELIST)) != -1) && device_count > 0) {
+    if (!pGetRawInputDeviceListInit) {
+        HMODULE user32 = GetModuleHandle(TEXT("user32.dll"));
+        if (user32) {
+            pGetRawInputDeviceList = (pfnGetRawInputDeviceList)GetProcAddress(user32, "GetRawInputDeviceList");
+        }
+        pGetRawInputDeviceListInit = SDL_TRUE;
+    }
+
+    if (!pGetRawInputDeviceList) {
+        return;
+    }
+
+    if ((pGetRawInputDeviceList(NULL, &device_count, sizeof(RAWINPUTDEVICELIST)) != -1) && device_count > 0) {
         PRAWINPUTDEVICELIST devices = NULL;
         UINT i;
 
         devices = (PRAWINPUTDEVICELIST)SDL_malloc(sizeof(RAWINPUTDEVICELIST) * device_count);
         if (devices) {
-            device_count = GetRawInputDeviceList(devices, &device_count, sizeof(RAWINPUTDEVICELIST));
+            device_count = pGetRawInputDeviceList(devices, &device_count, sizeof(RAWINPUTDEVICELIST));
             if (device_count != (UINT)-1) {
                 for (i = 0; i < device_count; ++i) {
                     RAWINPUT_AddDevice(devices[i].hDevice);
@@ -2081,6 +2117,18 @@ int RAWINPUT_RegisterNotifications(HWND hWnd)
     int i;
     RAWINPUTDEVICE rid[SDL_arraysize(subscribed_devices)];
 
+    if (!pRegisterRawInputDevicesInit) {
+        HMODULE user32 = GetModuleHandle(TEXT("user32.dll"));
+        if (user32) {
+            pRegisterRawInputDevices = (pfnRegisterRawInputDevices)GetProcAddress(user32, "RegisterRawInputDevices");
+        }
+        pRegisterRawInputDevicesInit = SDL_TRUE;
+    }
+
+    if (!pRegisterRawInputDevices) {
+        return SDL_SetError("Raw input not available in this version of Windows");
+    }
+
     if (!SDL_RAWINPUT_inited) {
         return 0;
     }
@@ -2092,7 +2140,7 @@ int RAWINPUT_RegisterNotifications(HWND hWnd)
         rid[i].hwndTarget = hWnd;
     }
 
-    if (!RegisterRawInputDevices(rid, SDL_arraysize(rid), sizeof(RAWINPUTDEVICE))) {
+    if (!pRegisterRawInputDevices(rid, SDL_arraysize(rid), sizeof(RAWINPUTDEVICE))) {
         return SDL_SetError("Couldn't register for raw input events");
     }
     return 0;
@@ -2102,6 +2150,18 @@ int RAWINPUT_UnregisterNotifications(void)
 {
     int i;
     RAWINPUTDEVICE rid[SDL_arraysize(subscribed_devices)];
+
+    if (!pRegisterRawInputDevicesInit) {
+        HMODULE user32 = GetModuleHandle(TEXT("user32.dll"));
+        if (user32) {
+            pRegisterRawInputDevices = (pfnRegisterRawInputDevices)GetProcAddress(user32, "RegisterRawInputDevices");
+        }
+        pRegisterRawInputDevicesInit = SDL_TRUE;
+    }
+
+    if (!pRegisterRawInputDevices) {
+        return SDL_SetError("Raw input not available in this version of Windows");
+    }
 
     if (!SDL_RAWINPUT_inited) {
         return 0;
@@ -2114,7 +2174,7 @@ int RAWINPUT_UnregisterNotifications(void)
         rid[i].hwndTarget = NULL;
     }
 
-    if (!RegisterRawInputDevices(rid, SDL_arraysize(rid), sizeof(RAWINPUTDEVICE))) {
+    if (!pRegisterRawInputDevices(rid, SDL_arraysize(rid), sizeof(RAWINPUTDEVICE))) {
         return SDL_SetError("Couldn't unregister for raw input events");
     }
     return 0;
@@ -2157,7 +2217,20 @@ RAWINPUT_WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             Uint8 data[sizeof(RAWINPUTHEADER) + sizeof(RAWHID) + USB_PACKET_LENGTH];
             UINT buffer_size = SDL_arraysize(data);
 
-            if ((int)GetRawInputData((HRAWINPUT)lParam, RID_INPUT, data, &buffer_size, sizeof(RAWINPUTHEADER)) > 0) {
+            if (!pGetRawInputDataInit) {
+                HMODULE user32 = GetModuleHandle(TEXT("user32.dll"));
+                if (user32) {
+                    pGetRawInputData = (pfnGetRawInputData)GetProcAddress(user32, "GetRawInputData");
+                }
+                pGetRawInputDataInit = SDL_TRUE;
+            }
+
+            if (!pGetRawInputData) {
+                result = 0;
+                break;
+            }
+
+            if ((int)pGetRawInputData((HRAWINPUT)lParam, RID_INPUT, data, &buffer_size, sizeof(RAWINPUTHEADER)) > 0) {
                 PRAWINPUT raw_input = (PRAWINPUT)data;
                 SDL_RAWINPUT_Device *device = RAWINPUT_DeviceFromHandle(raw_input->header.hDevice);
                 if (device) {
